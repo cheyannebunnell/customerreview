@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Product Feedback Survey</title>
 
-<ttps://www.gstatic.com/charts/loader.jsscript>
+<!-- FIX: was a malformed tag (<ttps://...loader.jsscript>) -->
+<script src="https://www.gstatic.com/charts/loader.js"></script>
 
 <style>
 body {
@@ -40,10 +41,20 @@ textarea {
     margin-top: 6px;
     border: 1px solid #ccc;
     border-radius: 5px;
+    box-sizing: border-box;
 }
 
 textarea {
     height: 120px;
+}
+
+/* Honeypot: hidden from humans, bots tend to fill it in */
+.hp {
+    position: absolute;
+    left: -9999px;
+    height: 0;
+    width: 0;
+    overflow: hidden;
 }
 
 .button-group {
@@ -61,13 +72,13 @@ button {
     font-size: 15px;
 }
 
-.submit-btn {
-    background: #28a745;
+button:disabled {
+    opacity: .6;
+    cursor: not-allowed;
 }
 
-.results-btn {
-    background: #007bff;
-}
+.submit-btn  { background: #28a745; }
+.results-btn { background: #007bff; }
 
 #status {
     margin-top: 15px;
@@ -84,6 +95,12 @@ button {
     height: 450px;
     margin-bottom: 30px;
 }
+
+.empty-msg {
+    text-align: center;
+    color: #666;
+    padding: 40px 0;
+}
 </style>
 </head>
 
@@ -95,8 +112,8 @@ button {
 
 <form id="surveyForm">
 
-<label>How often do you use the product?</label>
-<select name="usageFrequency" required>
+<label for="usageFrequency">How often do you use the product?</label>
+<select id="usageFrequency" name="usageFrequency" required>
   <option value="">Select One</option>
   <option>Daily</option>
   <option>Several Times Per Week</option>
@@ -105,8 +122,8 @@ button {
   <option>Rarely</option>
 </select>
 
-<label>Which feature do you use most?</label>
-<select name="favoriteFeature" required>
+<label for="favoriteFeature">Which feature do you use most?</label>
+<select id="favoriteFeature" name="favoriteFeature" required>
   <option value="">Select One</option>
   <option>Feature A</option>
   <option>Feature B</option>
@@ -114,8 +131,8 @@ button {
   <option>Feature D</option>
 </select>
 
-<label>Overall Satisfaction</label>
-<select name="satisfaction" required>
+<label for="satisfaction">Overall Satisfaction</label>
+<select id="satisfaction" name="satisfaction" required>
   <option value="">Select One</option>
   <option>Very Satisfied</option>
   <option>Satisfied</option>
@@ -124,208 +141,217 @@ button {
   <option>Very Dissatisfied</option>
 </select>
 
-<label>Describe your experience</label>
+<label for="freeResponse">Describe your experience</label>
 <textarea
-name="freeResponse"
-placeholder="Please tell us about your experience..."
-required></textarea>
+  id="freeResponse"
+  name="freeResponse"
+  placeholder="Please tell us about your experience..."
+  maxlength="4000"
+  required></textarea>
+
+<!-- Honeypot field -->
+<div class="hp" aria-hidden="true">
+  <label>Leave this empty
+    <input type="text" name="website" tabindex="-1" autocomplete="off">
+  </label>
+</div>
 
 <div class="button-group">
-  <button type="submit" class="submit-btn">
+  <button type="submit" class="submit-btn" id="submitBtn">
     Submit Survey
   </button>
 
-  <button
-    type="button"
-    class="results-btn"
-    onclick="loadResults()">
+  <button type="button" class="results-btn" id="resultsBtn">
     View Results
   </button>
 </div>
 
-<div id="status"></div>
-
 </form>
 
+<!-- FIX: status moved outside the form so it's independent of form reset -->
+<div id="status" role="status" aria-live="polite"></div>
+
 <div id="resultsSection">
-
-<h2>Survey Results</h2>
-
-<div id="usageChart" class="chart"></div>
-
-<div id="featureChart" class="chart"></div>
-
-<div id="satisfactionChart" class="chart"></div>
-
+  <h2>Survey Results</h2>
+  <div id="usageChart" class="chart"></div>
+  <div id="featureChart" class="chart"></div>
+  <div id="satisfactionChart" class="chart"></div>
 </div>
 
 </div>
 
 <script>
 
-google.charts.load('current', {
-  packages:['corechart']
-});
-
 const WEB_APP_URL =
 "https://script.google.com/macros/s/AKfycbzWGyhoOVldnmnl85Lj_Q62nGZh0pZCF_r2BCS3t8CTd3ObGV7RWpXo3yID6TCruVEo7w/exec";
 
+// Keep display order sensible for the ordered categories
+const USAGE_ORDER = ["Daily", "Several Times Per Week", "Weekly", "Monthly", "Rarely"];
+const SATISFACTION_ORDER = ["Very Satisfied", "Satisfied", "Neutral", "Dissatisfied", "Very Dissatisfied"];
 
-document
-.getElementById("surveyForm")
-.addEventListener("submit", submitSurvey);
+// FIX: wait for the charts library before drawing
+google.charts.load('current', { packages: ['corechart'] });
+const chartsReady = new Promise(resolve => google.charts.setOnLoadCallback(resolve));
+
+let lastResults = null;
+
+const statusEl = document.getElementById("status");
+const submitBtn = document.getElementById("submitBtn");
+const resultsBtn = document.getElementById("resultsBtn");
+
+document.getElementById("surveyForm").addEventListener("submit", submitSurvey);
+resultsBtn.addEventListener("click", loadResults);
+
+// Redraw charts on resize so they stay responsive
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (lastResults) drawAll(lastResults); }, 200);
+});
+
+function setStatus(msg) {
+  statusEl.textContent = msg;
+}
 
 
-function submitSurvey(event) {
+async function submitSurvey(event) {
 
   event.preventDefault();
 
-  const formData = new FormData(event.target);
-
+  const form = event.target;
   const data = {};
+  new FormData(form).forEach((value, key) => { data[key] = value; });
 
-  formData.forEach((value,key)=>{
-    data[key] = value;
-  });
+  // Honeypot tripped: pretend success, send nothing
+  if (data.website) {
+    setStatus("✅ Survey submitted successfully.");
+    form.reset();
+    return;
+  }
+  delete data.website;
 
-  document.getElementById("status").innerHTML =
-      "Submitting survey...";
+  submitBtn.disabled = true;
+  setStatus("Submitting survey...");
 
-  fetch(WEB_APP_URL, {
+  try {
+    // No Content-Type header on purpose: this sends text/plain,
+    // which avoids a CORS preflight that Apps Script can't answer.
+    const response = await fetch(WEB_APP_URL, {
       method: "POST",
       body: JSON.stringify(data)
-  })
-  .then(response => response.text())
-  .then(() => {
+    });
 
-      document.getElementById("status").innerHTML =
-          "✅ Survey submitted successfully.";
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
 
-      document.getElementById("surveyForm").reset();
+    // FIX: actually check the server's reported status
+    const result = await response.json();
+    if (result.status !== "success") {
+      throw new Error(result.message || "Server reported an error");
+    }
 
-  })
-  .catch(error => {
+    setStatus("✅ Survey submitted successfully.");
+    form.reset();
 
-      console.error(error);
+  } catch (error) {
+    console.error(error);
+    setStatus("❌ Submission failed. Please try again.");
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
 
-      document.getElementById("status").innerHTML =
-          "❌ Submission failed.";
 
+async function loadResults() {
+
+  resultsBtn.disabled = true;
+  setStatus("Loading results...");
+
+  try {
+    const response = await fetch(WEB_APP_URL + "?action=results");
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    const data = await response.json();
+
+    if (data.status === "error") {
+      throw new Error(data.message || "Server reported an error");
+    }
+
+    await chartsReady;
+
+    lastResults = data;
+    document.getElementById("resultsSection").style.display = "block";
+    drawAll(data);
+
+    setStatus("✅ Results loaded.");
+
+  } catch (error) {
+    console.error(error);
+    setStatus("❌ Unable to load results.");
+  } finally {
+    resultsBtn.disabled = false;
+  }
+}
+
+
+function drawAll(data) {
+  drawChart({
+    elementId: "usageChart",
+    results: data.usageFrequency,
+    header: ["Usage Frequency", "Responses"],
+    ChartType: google.visualization.ColumnChart,
+    options: { title: "Usage Frequency", legend: "none" },
+    order: USAGE_ORDER
+  });
+
+  drawChart({
+    elementId: "featureChart",
+    results: data.favoriteFeature,
+    header: ["Feature", "Responses"],
+    ChartType: google.visualization.PieChart,
+    options: { title: "Favorite Features" }
+  });
+
+  drawChart({
+    elementId: "satisfactionChart",
+    results: data.satisfaction,
+    header: ["Satisfaction", "Responses"],
+    ChartType: google.visualization.BarChart,
+    options: { title: "Customer Satisfaction", legend: "none" },
+    order: SATISFACTION_ORDER
   });
 }
 
 
-function loadResults() {
+// One shared draw function instead of three near-identical ones
+function drawChart({ elementId, results, header, ChartType, options, order }) {
 
-  document.getElementById("status").innerHTML =
-      "Loading results...";
+  const el = document.getElementById(elementId);
+  const keys = Object.keys(results || {});
 
-  fetch(WEB_APP_URL + "?action=results")
-  .then(response => response.json())
-  .then(data => {
+  // FIX: handle empty results instead of drawing a broken chart
+  if (keys.length === 0) {
+    el.innerHTML = '<div class="empty-msg">No responses yet for "' +
+      options.title + '".</div>';
+    return;
+  }
 
-      console.log("Results:", data);
+  if (order) {
+    keys.sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+  }
 
-      document.getElementById("resultsSection")
-      .style.display = "block";
+  const rows = [header];
+  keys.forEach(key => rows.push([key, Number(results[key]) || 0]));
 
-      drawUsageChart(data.usageFrequency);
-      drawFeatureChart(data.favoriteFeature);
-      drawSatisfactionChart(data.satisfaction);
-
-      document.getElementById("status").innerHTML =
-          "✅ Results loaded.";
-
-  })
-  .catch(error => {
-
-      console.error(error);
-
-      document.getElementById("status").innerHTML =
-          "❌ Unable to load results.";
-
-      alert(
-        "Could not load results. Check browser console (F12)."
-      );
-
-  });
-
-}
-
-
-function drawUsageChart(results) {
-
-  const chartData = [
-      ['Usage Frequency','Responses']
-  ];
-
-  Object.keys(results || {}).forEach(key => {
-      chartData.push([key, results[key]]);
-  });
-
-  const data =
-      google.visualization.arrayToDataTable(chartData);
-
-  const chart =
-      new google.visualization.ColumnChart(
-          document.getElementById("usageChart")
-      );
-
-  chart.draw(data, {
-      title: "Usage Frequency",
-      legend: "none"
-  });
-
-}
-
-
-function drawFeatureChart(results) {
-
-  const chartData = [
-      ['Feature','Responses']
-  ];
-
-  Object.keys(results || {}).forEach(key => {
-      chartData.push([key, results[key]]);
-  });
-
-  const data =
-      google.visualization.arrayToDataTable(chartData);
-
-  const chart =
-      new google.visualization.PieChart(
-          document.getElementById("featureChart")
-      );
-
-  chart.draw(data, {
-      title: "Favorite Features"
-  });
-
-}
-
-
-function drawSatisfactionChart(results) {
-
-  const chartData = [
-      ['Satisfaction','Responses']
-  ];
-
-  Object.keys(results || {}).forEach(key => {
-      chartData.push([key, results[key]]);
-  });
-
-  const data =
-      google.visualization.arrayToDataTable(chartData);
-
-  const chart =
-      new google.visualization.BarChart(
-          document.getElementById("satisfactionChart")
-      );
-
-  chart.draw(data, {
-      title: "Customer Satisfaction"
-  });
-
+  const table = google.visualization.arrayToDataTable(rows);
+  new ChartType(el).draw(table, options);
 }
 
 </script>
