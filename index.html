@@ -1,360 +1,285 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Product Feedback Survey</title>
+/**
+ * Survey backend (Google Apps Script)
+ *
+ * SETUP
+ * 1. Project Settings > Script Properties > add GEMINI_API_KEY.
+ * 2. Make sure the spreadsheet has a tab named "Responses" (headers are
+ *    created automatically if the tab is empty).
+ * 3. Deploy > New deployment > Web app
+ *      Execute as: Me | Who has access: Anyone
+ *    After ANY code change, create a NEW deployment version, otherwise the
+ *    /exec URL keeps serving the old code.
+ */
 
-<!-- FIX: was a malformed tag (<ttps://...loader.jsscript>) -->
-<script src="https://www.gstatic.com/charts/loader.js"></script>
+const SHEET_NAME = "Responses";
 
-<style>
-body {
-    font-family: Arial, sans-serif;
-    max-width: 1000px;
-    margin: 40px auto;
-    padding: 20px;
-    background-color: #f5f5f5;
-}
+// Change this if Google retires the model. See https://ai.google.dev/gemini-api/docs/models
+const GEMINI_MODEL = "gemini-2.5-flash";
 
-.container {
-    background: white;
-    padding: 25px;
-    border-radius: 10px;
-    box-shadow: 0 0 10px rgba(0,0,0,.1);
-}
+const HEADERS = [
+  "Timestamp",
+  "Usage Frequency",
+  "Favorite Feature",
+  "Satisfaction",
+  "Free Response",
+  "AI Analysis"
+];
 
-h1, h2 {
-    text-align: center;
-}
-
-label {
-    display: block;
-    margin-top: 15px;
-    font-weight: bold;
-}
-
-select,
-textarea {
-    width: 100%;
-    padding: 10px;
-    margin-top: 6px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    box-sizing: border-box;
-}
-
-textarea {
-    height: 120px;
-}
-
-/* Honeypot: hidden from humans, bots tend to fill it in */
-.hp {
-    position: absolute;
-    left: -9999px;
-    height: 0;
-    width: 0;
-    overflow: hidden;
-}
-
-.button-group {
-    margin-top: 20px;
-    display: flex;
-    gap: 10px;
-}
-
-button {
-    padding: 12px 20px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    color: white;
-    font-size: 15px;
-}
-
-button:disabled {
-    opacity: .6;
-    cursor: not-allowed;
-}
-
-.submit-btn  { background: #28a745; }
-.results-btn { background: #007bff; }
-
-#status {
-    margin-top: 15px;
-    font-weight: bold;
-}
-
-#resultsSection {
-    display: none;
-    margin-top: 40px;
-}
-
-.chart {
-    width: 100%;
-    height: 450px;
-    margin-bottom: 30px;
-}
-
-.empty-msg {
-    text-align: center;
-    color: #666;
-    padding: 40px 0;
-}
-</style>
-</head>
-
-<body>
-
-<div class="container">
-
-<h1>Product Feedback Survey</h1>
-
-<form id="surveyForm">
-
-<label for="usageFrequency">How often do you use the product?</label>
-<select id="usageFrequency" name="usageFrequency" required>
-  <option value="">Select One</option>
-  <option>Daily</option>
-  <option>Several Times Per Week</option>
-  <option>Weekly</option>
-  <option>Monthly</option>
-  <option>Rarely</option>
-</select>
-
-<label for="favoriteFeature">Which feature do you use most?</label>
-<select id="favoriteFeature" name="favoriteFeature" required>
-  <option value="">Select One</option>
-  <option>Feature A</option>
-  <option>Feature B</option>
-  <option>Feature C</option>
-  <option>Feature D</option>
-</select>
-
-<label for="satisfaction">Overall Satisfaction</label>
-<select id="satisfaction" name="satisfaction" required>
-  <option value="">Select One</option>
-  <option>Very Satisfied</option>
-  <option>Satisfied</option>
-  <option>Neutral</option>
-  <option>Dissatisfied</option>
-  <option>Very Dissatisfied</option>
-</select>
-
-<label for="freeResponse">Describe your experience</label>
-<textarea
-  id="freeResponse"
-  name="freeResponse"
-  placeholder="Please tell us about your experience..."
-  maxlength="4000"
-  required></textarea>
-
-<!-- Honeypot field -->
-<div class="hp" aria-hidden="true">
-  <label>Leave this empty
-    <input type="text" name="website" tabindex="-1" autocomplete="off">
-  </label>
-</div>
-
-<div class="button-group">
-  <button type="submit" class="submit-btn" id="submitBtn">
-    Submit Survey
-  </button>
-
-  <button type="button" class="results-btn" id="resultsBtn">
-    View Results
-  </button>
-</div>
-
-</form>
-
-<!-- FIX: status moved outside the form so it's independent of form reset -->
-<div id="status" role="status" aria-live="polite"></div>
-
-<div id="resultsSection">
-  <h2>Survey Results</h2>
-  <div id="usageChart" class="chart"></div>
-  <div id="featureChart" class="chart"></div>
-  <div id="satisfactionChart" class="chart"></div>
-</div>
-
-</div>
-
-<script>
-
-const WEB_APP_URL =
-"https://script.google.com/macros/s/AKfycbzWGyhoOVldnmnl85Lj_Q62nGZh0pZCF_r2BCS3t8CTd3ObGV7RWpXo3yID6TCruVEo7w/exec";
-
-// Keep display order sensible for the ordered categories
-const USAGE_ORDER = ["Daily", "Several Times Per Week", "Weekly", "Monthly", "Rarely"];
-const SATISFACTION_ORDER = ["Very Satisfied", "Satisfied", "Neutral", "Dissatisfied", "Very Dissatisfied"];
-
-// FIX: wait for the charts library before drawing
-google.charts.load('current', { packages: ['corechart'] });
-const chartsReady = new Promise(resolve => google.charts.setOnLoadCallback(resolve));
-
-let lastResults = null;
-
-const statusEl = document.getElementById("status");
-const submitBtn = document.getElementById("submitBtn");
-const resultsBtn = document.getElementById("resultsBtn");
-
-document.getElementById("surveyForm").addEventListener("submit", submitSurvey);
-resultsBtn.addEventListener("click", loadResults);
-
-// Redraw charts on resize so they stay responsive
-let resizeTimer;
-window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (lastResults) drawAll(lastResults); }, 200);
-});
-
-function setStatus(msg) {
-  statusEl.textContent = msg;
-}
+const PENDING = "Pending";
+const MAX_TEXT_LENGTH = 4000;
 
 
-async function submitSurvey(event) {
-
-  event.preventDefault();
-
-  const form = event.target;
-  const data = {};
-  new FormData(form).forEach((value, key) => { data[key] = value; });
-
-  // Honeypot tripped: pretend success, send nothing
-  if (data.website) {
-    setStatus("✅ Survey submitted successfully.");
-    form.reset();
-    return;
-  }
-  delete data.website;
-
-  submitBtn.disabled = true;
-  setStatus("Submitting survey...");
-
+/**
+ * GET Requests
+ */
+function doGet(e) {
   try {
-    // No Content-Type header on purpose: this sends text/plain,
-    // which avoids a CORS preflight that Apps Script can't answer.
-    const response = await fetch(WEB_APP_URL, {
-      method: "POST",
-      body: JSON.stringify(data)
-    });
+    const action = e && e.parameter ? e.parameter.action : "";
 
-    if (!response.ok) {
-      throw new Error("HTTP " + response.status);
+    if (action === "results") {
+      return getResults();
     }
 
-    // FIX: actually check the server's reported status
-    const result = await response.json();
-    if (result.status !== "success") {
-      throw new Error(result.message || "Server reported an error");
-    }
-
-    setStatus("✅ Survey submitted successfully.");
-    form.reset();
+    return jsonResponse({ status: "ok", message: "Survey API Running" });
 
   } catch (error) {
-    console.error(error);
-    setStatus("❌ Submission failed. Please try again.");
-  } finally {
-    submitBtn.disabled = false;
+    return jsonResponse({ status: "error", message: error.message });
   }
 }
 
 
-async function loadResults() {
+/**
+ * POST Requests
+ */
+function doPost(e) {
 
-  resultsBtn.disabled = true;
-  setStatus("Loading results...");
+  const lock = LockService.getScriptLock();
 
   try {
-    const response = await fetch(WEB_APP_URL + "?action=results");
-
-    if (!response.ok) {
-      throw new Error("HTTP " + response.status);
+    if (!e || !e.postData || !e.postData.contents) {
+      throw new Error("Empty request body");
     }
 
-    const data = await response.json();
+    const data = JSON.parse(e.postData.contents);
 
-    if (data.status === "error") {
-      throw new Error(data.message || "Server reported an error");
+    // Basic validation
+    if (!data.usageFrequency || !data.favoriteFeature ||
+        !data.satisfaction || !data.freeResponse) {
+      throw new Error("Missing required fields");
     }
 
-    await chartsReady;
+    const freeResponse = String(data.freeResponse).slice(0, MAX_TEXT_LENGTH);
 
-    lastResults = data;
-    document.getElementById("resultsSection").style.display = "block";
-    drawAll(data);
+    // Serialize writes so simultaneous submissions don't interleave
+    lock.waitLock(30000);
 
-    setStatus("✅ Results loaded.");
+    const sheet = getSheet();
+
+    // Save the row immediately with a placeholder. The (slow) Gemini call
+    // happens afterwards in a background trigger, so the user isn't kept waiting.
+    sheet.appendRow([
+      new Date(),
+      String(data.usageFrequency),
+      String(data.favoriteFeature),
+      String(data.satisfaction),
+      freeResponse,
+      PENDING
+    ]);
+
+    lock.releaseLock();
+
+    // The row is already saved, so a trigger failure (e.g. permission not yet
+    // approved) must not make the submission look like it failed.
+    try {
+      scheduleAnalysis();
+    } catch (err) {
+      console.error("Could not schedule analysis: " + err.message);
+    }
+
+    return jsonResponse({ status: "success" });
 
   } catch (error) {
+    try { lock.releaseLock(); } catch (ignore) {}
     console.error(error);
-    setStatus("❌ Unable to load results.");
-  } finally {
-    resultsBtn.disabled = false;
+    return jsonResponse({ status: "error", message: error.message });
   }
 }
 
 
-function drawAll(data) {
-  drawChart({
-    elementId: "usageChart",
-    results: data.usageFrequency,
-    header: ["Usage Frequency", "Responses"],
-    ChartType: google.visualization.ColumnChart,
-    options: { title: "Usage Frequency", legend: "none" },
-    order: USAGE_ORDER
-  });
+/**
+ * Get Chart Data
+ */
+function getResults() {
 
-  drawChart({
-    elementId: "featureChart",
-    results: data.favoriteFeature,
-    header: ["Feature", "Responses"],
-    ChartType: google.visualization.PieChart,
-    options: { title: "Favorite Features" }
-  });
+  const sheet = getSheet();
+  const lastRow = sheet.getLastRow();
 
-  drawChart({
-    elementId: "satisfactionChart",
-    results: data.satisfaction,
-    header: ["Satisfaction", "Responses"],
-    ChartType: google.visualization.BarChart,
-    options: { title: "Customer Satisfaction", legend: "none" },
-    order: SATISFACTION_ORDER
-  });
-}
+  const usageCounts = {};
+  const featureCounts = {};
+  const satisfactionCounts = {};
 
+  // Row 1 is always the header (guaranteed by getSheet), so data starts at row 2
+  if (lastRow >= 2) {
+    const rows = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
 
-// One shared draw function instead of three near-identical ones
-function drawChart({ elementId, results, header, ChartType, options, order }) {
+    rows.forEach(row => {
+      const usage = row[1];
+      const feature = row[2];
+      const satisfaction = row[3];
 
-  const el = document.getElementById(elementId);
-  const keys = Object.keys(results || {});
-
-  // FIX: handle empty results instead of drawing a broken chart
-  if (keys.length === 0) {
-    el.innerHTML = '<div class="empty-msg">No responses yet for "' +
-      options.title + '".</div>';
-    return;
-  }
-
-  if (order) {
-    keys.sort((a, b) => {
-      const ia = order.indexOf(a), ib = order.indexOf(b);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      if (usage)        usageCounts[usage] = (usageCounts[usage] || 0) + 1;
+      if (feature)      featureCounts[feature] = (featureCounts[feature] || 0) + 1;
+      if (satisfaction) satisfactionCounts[satisfaction] = (satisfactionCounts[satisfaction] || 0) + 1;
     });
   }
 
-  const rows = [header];
-  keys.forEach(key => rows.push([key, Number(results[key]) || 0]));
-
-  const table = google.visualization.arrayToDataTable(rows);
-  new ChartType(el).draw(table, options);
+  return jsonResponse({
+    usageFrequency: usageCounts,
+    favoriteFeature: featureCounts,
+    satisfaction: satisfactionCounts
+  });
 }
 
-</script>
 
-</body>
-</html>
+/**
+ * Background analysis
+ */
+
+// Creates a one-off trigger (only if one isn't already waiting)
+function scheduleAnalysis() {
+  const exists = ScriptApp.getProjectTriggers()
+    .some(t => t.getHandlerFunction() === "processPending");
+
+  if (!exists) {
+    ScriptApp.newTrigger("processPending")
+      .timeBased()
+      .after(1000)
+      .create();
+  }
+}
+
+
+// Analyzes every row still marked "Pending"
+function processPending() {
+
+  // Remove the one-off trigger(s) that launched this run
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === "processPending") {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  const sheet = getSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const range = sheet.getRange(2, 5, lastRow - 1, 2); // columns E:F
+  const values = range.getValues();
+
+  values.forEach((row, i) => {
+    if (row[1] !== PENDING) return;
+
+    let analysis;
+    try {
+      analysis = analyzeWithGemini(row[0]);
+    } catch (error) {
+      analysis = "Gemini Error: " + error.message;
+    }
+
+    // Write only this one cell so we never clobber other rows
+    sheet.getRange(i + 2, 6).setValue(analysis);
+  });
+}
+
+
+/**
+ * Gemini Analysis
+ */
+function analyzeWithGemini(text) {
+
+  const apiKey = PropertiesService
+    .getScriptProperties()
+    .getProperty("GEMINI_API_KEY");
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY script property is not set");
+  }
+
+  const url =
+    "https://generativelanguage.googleapis.com/v1beta/models/" +
+    GEMINI_MODEL + ":generateContent";
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            text:
+              "Analyze this customer feedback and provide:\n" +
+              "1. Sentiment\n" +
+              "2. Key Themes\n" +
+              "3. Recommendations\n\n" +
+              "Feedback:\n" + text
+          }
+        ]
+      }
+    ]
+  };
+
+  const response = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    // Key goes in a header so it doesn't end up in URLs/logs
+    headers: { "x-goog-api-key": apiKey },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const responseCode = response.getResponseCode();
+  const responseText = response.getContentText();
+
+  if (responseCode !== 200) {
+    throw new Error("HTTP " + responseCode + ": " + responseText.slice(0, 300));
+  }
+
+  const result = JSON.parse(responseText);
+
+  // Guard against blocked/empty responses
+  const parts = result.candidates &&
+                result.candidates[0] &&
+                result.candidates[0].content &&
+                result.candidates[0].content.parts;
+
+  if (!parts || !parts.length) {
+    throw new Error("Gemini returned no content");
+  }
+
+  return parts.map(p => p.text || "").join("");
+}
+
+
+/**
+ * Helpers
+ */
+
+// Returns the Responses sheet, creating the header row if needed
+function getSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+
+  if (!sheet) {
+    throw new Error('Sheet "' + SHEET_NAME + '" not found');
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(HEADERS);
+  }
+
+  return sheet;
+}
+
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
