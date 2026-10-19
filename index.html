@@ -1,75 +1,293 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Product Feedback Survey</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; }
-    h1 { text-align: center; }
-    label { font-weight: bold; margin-top: 20px; display: block; }
-    textarea { width: 100%; height: 120px; margin-top: 8px; }
-    select, input[type="text"] { width: 100%; padding: 8px; margin-top: 8px; }
-    button { margin-top: 20px; padding: 10px 20px; font-size: 16px; }
-    #status { margin-top: 20px; font-weight: bold; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Product Feedback Survey</title>
+
+https://www.gstatic.com/charts/loader.jsscript>
+
+<style>
+body{
+    font-family: Arial, sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 20px;
+    background:#f4f4f4;
+}
+
+.container{
+    background:white;
+    padding:25px;
+    border-radius:10px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.1);
+}
+
+h1,h2{
+    text-align:center;
+}
+
+label{
+    display:block;
+    margin-top:15px;
+    font-weight:bold;
+}
+
+select,
+textarea{
+    width:100%;
+    padding:10px;
+    margin-top:5px;
+    border:1px solid #ccc;
+    border-radius:5px;
+}
+
+textarea{
+    height:120px;
+}
+
+.buttons{
+    margin-top:20px;
+    display:flex;
+    gap:10px;
+}
+
+button{
+    padding:10px 20px;
+    border:none;
+    border-radius:5px;
+    cursor:pointer;
+    color:white;
+}
+
+.submit-btn{
+    background:#28a745;
+}
+
+.results-btn{
+    background:#007bff;
+}
+
+#status{
+    margin-top:15px;
+    font-weight:bold;
+}
+
+#resultsSection{
+    display:none;
+    margin-top:40px;
+}
+
+.chart{
+    width:100%;
+    height:450px;
+    margin-bottom:30px;
+}
+</style>
 </head>
+
 <body>
+
+<div class="container">
 
 <h1>Product Feedback Survey</h1>
 
 <form id="surveyForm">
 
-  <label>How often do you use the product?</label>
-  <select name="usageFrequency" required>
-    <option value="">Select one</option>
+<label>How often do you use the product?</label>
+<select name="usageFrequency" required>
+    <option value="">Select an option</option>
     <option>Daily</option>
-    <option>Several times a week</option>
+    <option>Several Times Per Week</option>
     <option>Weekly</option>
     <option>Monthly</option>
     <option>Rarely</option>
-  </select>
+</select>
 
-  <label>What feature do you use the most?</label>
-  <select name="favoriteFeature" required>
-    <option value="">Select one</option>
+<label>Which feature do you use the most?</label>
+<select name="favoriteFeature" required>
+    <option value="">Select an option</option>
     <option>Feature A</option>
     <option>Feature B</option>
     <option>Feature C</option>
-    <option>Other</option>
-  </select>
+    <option>Feature D</option>
+</select>
 
-  <label>Describe your experience using the product (free response):</label>
-  <textarea name="freeResponse" required></textarea>
+<label>Overall satisfaction with the product</label>
+<select name="satisfaction" required>
+    <option value="">Select an option</option>
+    <option>Very Satisfied</option>
+    <option>Satisfied</option>
+    <option>Neutral</option>
+    <option>Dissatisfied</option>
+    <option>Very Dissatisfied</option>
+</select>
 
-  <button type="submit">Submit</button>
-  <div id="status"></div>
+<label>Describe your experience with the product</label>
+<textarea name="freeResponse" required></textarea>
+
+<div class="buttons">
+    <button type="submit" class="submit-btn">
+        Submit Survey
+    </button>
+
+    <button type="button" class="results-btn" onclick="loadResults()">
+        View Results
+    </button>
+</div>
+
+<div id="status"></div>
 
 </form>
 
-<script>
-  const submitURL = "https://script.google.com/macros/s/AKfycbzWGyhoOVldnmnl85Lj_Q62nGZh0pZCF_r2BCS3t8CTd3ObGV7RWpXo3yID6TCruVEo7w/exec";
+<div id="resultsSection">
 
-  document.getElementById("surveyForm").addEventListener("submit", function(e) {
+<h2>Survey Results</h2>
+
+<div id="usageChart" class="chart"></div>
+
+<div id="featureChart" class="chart"></div>
+
+</div>
+
+</div>
+
+<script>
+
+google.charts.load('current', {
+    packages:['corechart']
+});
+
+const WEB_APP_URL =
+"https://script.google.com/macros/s/AKfycbzWGyhoOVldnmnl85Lj_Q62nGZh0pZCF_r2BCS3t8CTd3ObGV7RWpXo3yID6TCruVEo7w/exec";
+
+document
+.getElementById("surveyForm")
+.addEventListener("submit", submitSurvey);
+
+function submitSurvey(e){
+
     e.preventDefault();
 
     const formData = new FormData(e.target);
-    const payload = {};
-    formData.forEach((v, k) => payload[k] = v);
 
-    document.getElementById("status").textContent = "Submitting...";
+    const data = {};
 
-    fetch(submitURL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    }).then(() => {
-      document.getElementById("status").textContent = "Thank you! Your feedback has been recorded.";
-      e.target.reset();
-    }).catch(() => {
-      document.getElementById("status").textContent = "Error submitting form.";
+    formData.forEach((value,key)=>{
+        data[key] = value;
     });
-  });
+
+    document.getElementById("status").innerHTML =
+        "Submitting...";
+
+    fetch(WEB_APP_URL,{
+        method:"POST",
+        body:JSON.stringify(data)
+    })
+    .then(res => res.text())
+    .then(() => {
+
+        document.getElementById("status").innerHTML =
+        "✅ Thank you! Your response was submitted.";
+
+        document.getElementById("surveyForm").reset();
+
+    })
+    .catch(error => {
+
+        document.getElementById("status").innerHTML =
+        "❌ Error submitting form.";
+
+        console.error(error);
+
+    });
+}
+
+function loadResults(){
+
+    fetch(WEB_APP_URL + "?action=results")
+    .then(response => response.json())
+    .then(results => {
+
+        document.getElementById("resultsSection")
+        .style.display = "block";
+
+        google.charts.setOnLoadCallback(function(){
+
+            drawUsageChart(results.usageFrequency);
+            drawFeatureChart(results.favoriteFeature);
+
+        });
+
+    })
+    .catch(error=>{
+        console.error(error);
+        alert("Unable to load survey results");
+    });
+}
+
+function drawUsageChart(dataObj){
+
+    const chartData = [
+        ['Usage Frequency','Responses']
+    ];
+
+    Object.keys(dataObj).forEach(key=>{
+        chartData.push([
+            key,
+            dataObj[key]
+        ]);
+    });
+
+    const data =
+     google.visualization.arrayToDataTable(chartData);
+
+    const options = {
+        title: 'Product Usage Frequency',
+        legend: { position:'none' },
+        colors:['#4285F4']
+    };
+
+    const chart =
+        new google.visualization.ColumnChart(
+            document.getElementById('usageChart')
+        );
+
+    chart.draw(data,options);
+}
+
+function drawFeatureChart(dataObj){
+
+    const chartData = [
+        ['Feature','Responses']
+    ];
+
+    Object.keys(dataObj).forEach(key=>{
+        chartData.push([
+            key,
+            dataObj[key]
+        ]);
+    });
+
+    const data =
+      google.visualization.arrayToDataTable(chartData);
+
+    const options = {
+        title:'Favorite Feature Distribution'
+    };
+
+    const chart =
+        new google.visualization.PieChart(
+            document.getElementById('featureChart')
+        );
+
+    chart.draw(data,options);
+}
+
+</script>
+
+</body>
+</html>
 </script>
 
 </body>
